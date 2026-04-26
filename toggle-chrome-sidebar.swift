@@ -4,7 +4,10 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-let targetTitles = ["Expand Tabs", "Collapse Tabs"]
+// Use Set instead of Array for faster lookup (O(1) lookup)
+let targetTitles: Set<String> = [
+    "Expand Tabs", "Collapse Tabs", 
+]
 
 guard let frontmostApp = NSWorkspace.shared.frontmostApplication,
       frontmostApp.bundleIdentifier == "com.google.Chrome" else {
@@ -13,7 +16,6 @@ guard let frontmostApp = NSWorkspace.shared.frontmostApplication,
 
 let appElement = AXUIElementCreateApplication(frontmostApp.processIdentifier)
 
-// Get the full windows array instead of forcing window.first
 var windowsValue: CFTypeRef?
 guard AXUIElementCopyAttributeValue(
     appElement,
@@ -26,38 +28,53 @@ let windows = windowsValue as? [AXUIElement] else {
 
 func findButtonBFS(startElement: AXUIElement) -> AXUIElement? {
     var queue: [(element: AXUIElement, depth: Int)] = [(startElement, 0)]
+    // Use an index pointer instead of queue.removeFirst() to avoid array shifting (O(1) pop)
+    var headIndex = 0 
     
-    while !queue.isEmpty {
-        let current = queue.removeFirst()
+    while headIndex < queue.count {
+        let current = queue[headIndex]
+        headIndex += 1
+        
         let element = current.element
         let depth = current.depth
         
+        // Stop searching if depth exceeds 7
         if depth > 7 { continue }
         
         var role: CFTypeRef?
-        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
-        let roleStr = role as? String ?? ""
+        if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) != .success {
+            continue
+        }
         
+        // Avoid expensive type casting if not necessary
+        guard let roleStr = role as? String else { continue }
+        
+        // Skip web content to save thousands of IPC calls
         if roleStr == "AXWebArea" { continue }
         
-        if roleStr == (kAXButtonRole as String) {
+        // kAXButtonRole is "AXButton"
+        if roleStr == "AXButton" { 
+            // Reduce IPC calls. Fetch and check Title first.
             var title: CFTypeRef?
-            AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &title)
-            let titleStr = title as? String ?? ""
+            if AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &title) == .success,
+               let titleStr = title as? String,
+               targetTitles.contains(titleStr) {
+                return element
+            }
             
+            // Only if Title doesn't match, make the expensive API call to get Description
             var desc: CFTypeRef?
-            AXUIElementCopyAttributeValue(element, kAXDescriptionAttribute as CFString, &desc)
-            let descStr = desc as? String ?? ""
-            
-            if targetTitles.contains(titleStr) || targetTitles.contains(descStr) {
+            if AXUIElementCopyAttributeValue(element, kAXDescriptionAttribute as CFString, &desc) == .success,
+               let descStr = desc as? String,
+               targetTitles.contains(descStr) {
                 return element
             }
         }
         
+        // Add children to the queue for BFS traversal
         var children: CFTypeRef?
-        AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children)
-        
-        if let childArray = children as? [AXUIElement] {
+        if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children) == .success,
+           let childArray = children as? [AXUIElement] {
             for child in childArray {
                 queue.append((child, depth + 1))
             }
@@ -66,20 +83,20 @@ func findButtonBFS(startElement: AXUIElement) -> AXUIElement? {
     return nil
 }
 
-// Search with retry mechanism
+// Search with a smart retry mechanism
 let maxRetries = 3
 let retryDelayMicroseconds: useconds_t = 50_000
 var targetButton: AXUIElement? = nil
 
 for _ in 0..<maxRetries {
-    // Iterate through all existing Chrome windows
+    // Iterate through all existing Chrome windows (fixes the input focus bug)
     for window in windows {
         if let found = findButtonBFS(startElement: window) {
             targetButton = found
             break
         }
     }
-    // If the button was found in one of the windows, exit the retry loop
+    // If the button is found, immediately exit the retry loop
     if targetButton != nil { break }
     
     usleep(retryDelayMicroseconds)
