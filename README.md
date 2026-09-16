@@ -1,69 +1,123 @@
-# ChromeSidebarToggleRaycast
+# ChromeSidebarToggle
 
-https://github.com/user-attachments/assets/7e155801-40e3-4101-a532-8856a9ad3aa0
+A high-performance utility that toggles Google Chrome's tab sidebar / vertical tabs with a single keystroke on macOS.
 
-A [Raycast](https://www.raycast.com/) script command that toggles Chrome's tab sidebar with a single keystroke.
+Chrome's "Expand tabs" / "Collapse tabs" button has no default keyboard shortcut. This tool uses the macOS Accessibility API to find and press it programmatically — no coordinate hacking, works on any screen size or resolution.
 
-Chrome's "Expand tabs" / "Collapse tabs" button has no keyboard shortcut. This script uses the macOS Accessibility API to find and press it programmatically — no coordinate hacking, works on any screen or resolution.
+---
 
 ## Requirements
 
-- macOS 13+
-- [Raycast](https://www.raycast.com/)
-- Google Chrome with the tab sidebar enabled
+- macOS 13+ (tested up to macOS 27+)
+- Google Chrome with tab sidebar / vertical tabs enabled
 - Xcode Command Line Tools (`xcode-select --install`)
+- Either **Automator (Built-in macOS)** or **[Raycast](https://www.raycast.com/)**
 
-## Installation
+---
 
-1. Clone the repo:
+## Build
+
+Compile the Swift source code into a native binary executable:
+
+```bash
+swiftc -O toggle-chrome-sidebar.swift -o toggle-chrome-sidebar
+```
+
+---
+
+## Setup Options
+
+### Option A: Native macOS Shortcut (Automator Quick Action)
+
+This method requires **no third-party launcher**.
+
+1. **Copy binary**:
    ```bash
-   git clone https://github.com/RotulPlastik/ChromeSidebarToggleRaycast.git
-   cd ChromeSidebarToggleRaycast
+   cp toggle-chrome-sidebar ~/Library/Services/
+   xattr -c ~/Library/Services/toggle-chrome-sidebar
    ```
 
-2. Build the binary:
+2. **Create Quick Action in Automator**:
+   - Open **Automator.app** > **New Document** > **Quick Action**.
+   - Configure at the top:
+     - *Workflow receives*: **no input** in **Google Chrome.app**.
+   - Search and add the **Run Shell Script** action from the library:
+     - *Shell*: `/bin/zsh`
+     - *Pass input*: `to stdin`
+     - Script content:
+       ```bash
+       /Users/<your-username>/Library/Services/toggle-chrome-sidebar
+       ```
+   - Save the workflow (e.g. `ToggleChromeSideBar`).
+
+3. **Assign Keyboard Shortcut**:
+   - Go to **System Settings > Keyboard > Keyboard Shortcuts > Services > General**.
+   - Locate `ToggleChromeSideBar` and double-click to assign your shortcut (e.g. `^Z` or `⌘⌥S`).
+
+---
+
+### Option B: Raycast Script Command
+
+1. **Install scripts**:
    ```bash
    ./build.sh
-   ```
-   This compiles `toggle-chrome-sidebar.swift` and places the binary at `~/raycast-scripts/bin/toggle-chrome-sidebar`.
-
-3. Copy the Raycast wrapper:
-   ```bash
    cp toggle-chrome-sidebar.sh ~/raycast-scripts/
    ```
 
-4. Add `~/raycast-scripts/` as a Script Command directory in Raycast (Settings > Extensions > Script Commands > Add Directories) if not already added.
+2. **Configure Raycast**:
+   - Add `~/raycast-scripts/` in **Raycast Settings > Extensions > Script Commands > Add Directories**.
+   - Search for **"Toggle Chrome Sidebar"** in Raycast or assign a hotkey.
 
-5. Grant Raycast **Accessibility** access in System Settings > Privacy & Security > Accessibility.
+---
 
-## Usage
+## 🔒 Granting Accessibility Permissions (Important)
 
-Open Raycast and search for **"Toggle Chrome Sidebar"**, or assign it a hotkey in Raycast settings.
+macOS requires Accessibility permissions to interact with UI elements programmatically. If not granted, the script will prompt for permissions or log `kAXErrorAPIDisabled (-25211)`.
 
-## How it works
+### For Automator / Quick Action Shortcuts
+When invoked via a system shortcut, macOS runs the Quick Action through **`WorkflowServiceRunner.xpc`**:
 
-1. Finds Chrome via its bundle identifier (`com.google.Chrome`)
-2. Walks Chrome's Accessibility tree (`AXUIElement`) looking for a button titled "Expand tabs" or "Collapse tabs"
-3. Presses the button via `AXUIElementPerformAction`
+1. Open **System Settings > Privacy & Security > Accessibility**.
+2. Click the **`+`** button (authenticate with Touch ID or password).
+3. Press **`Cmd + Shift + G`** in the file selector dialog.
+4. Paste the exact executable path:
+   ```text
+   /System/Library/Frameworks/AppKit.framework/Versions/C/XPCServices/WorkflowServiceRunner.xpc/Contents/MacOS/WorkflowServiceRunner
+   ```
+5. Click **Open** and ensure the toggle is turned **ON (green)**.
+6. Also ensure **Google Chrome** and **Automator** are toggled **ON** in the Accessibility list.
 
-The script is pre-compiled to a native binary for near-instant execution (~10ms vs ~1.5s for interpreted Swift).
+> [!TIP]
+> **After macOS major updates:** macOS may invalidate existing TCC permissions. If the shortcut stops working after an OS upgrade, toggle **WorkflowServiceRunner** and **Google Chrome** **OFF** and then back **ON** in Accessibility settings.
+
+### For Raycast
+1. Open **System Settings > Privacy & Security > Accessibility**.
+2. Turn **ON** the toggle for **Raycast**.
+
+---
+
+## How It Works
+
+1. Identifies the active/running Google Chrome instance (`com.google.Chrome`).
+2. Traverses Chrome's accessibility hierarchy using BFS (skipping `AXWebArea` to maintain sub-millisecond execution).
+3. Matches the tab sidebar toggle button case-insensitively (`"expand tabs"`, `"collapse tabs"`, etc.).
+4. Simulates a press event via `AXUIElementPerformAction` (`kAXPressAction`).
+5. Displays clear error diagnostics and prompts for permissions if missing.
+
+---
 
 ## Files
 
 | File | Description |
-|------|-------------|
-| `toggle-chrome-sidebar.swift` | Swift source — the main logic |
-| `toggle-chrome-sidebar.sh` | Bash wrapper with Raycast metadata (calls the compiled binary) |
-| `build.sh` | Compiles the Swift source to `~/raycast-scripts/bin/` |
-| `chrome-mouse-offset.swift` | Bonus utility — reports mouse position relative to Chrome's window (useful for coordinate-based automation) |
+|---|---|
+| `toggle-chrome-sidebar.swift` | Swift source code with BFS search, error handling, and permission prompts |
+| `toggle-chrome-sidebar` | Compiled native binary |
+| `build-instructions.md` | Terminal build instructions & deployment notes |
+| `build.sh` | Build helper script for Raycast deployment (`~/raycast-scripts/bin/`) |
+| `toggle-chrome-sidebar.sh` | Bash wrapper script for Raycast integration |
+| `chrome-mouse-offset.swift` | Utility script to inspect mouse offsets relative to Chrome windows |
 
-## Rebuilding
-
-After editing `toggle-chrome-sidebar.swift`:
-
-```bash
-./build.sh
-```
+---
 
 ## License
 
