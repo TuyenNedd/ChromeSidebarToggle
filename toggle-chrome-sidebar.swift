@@ -40,14 +40,22 @@ guard winStatus == .success,
 
 func isTargetButton(text: String) -> Bool {
     let lower = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if lower.isEmpty { return false }
     if lower == "expand tabs" || lower == "collapse tabs" ||
-       lower == "expand tab strip" || lower == "collapse tab strip" {
+       lower == "expand tab strip" || lower == "collapse tab strip" ||
+       lower == "expand vertical tabs" || lower == "collapse vertical tabs" {
         return true
     }
-    return lower.contains("expand tab") || lower.contains("collapse tab")
+    if lower.contains("expand tab") || lower.contains("collapse tab") ||
+       (lower.contains("expand") && lower.contains("tab")) ||
+       (lower.contains("collapse") && lower.contains("tab")) ||
+       lower.contains("mở rộng thẻ") || lower.contains("thu gọn thẻ") {
+        return true
+    }
+    return false
 }
 
-func findButtonBFS(startElement: AXUIElement) -> AXUIElement? {
+func findButtonBFS(startElement: AXUIElement, collectDebugButtons: inout [String]?) -> AXUIElement? {
     var queue: [(element: AXUIElement, depth: Int)] = [(startElement, 0)]
     var headIndex = 0 
     
@@ -74,16 +82,23 @@ func findButtonBFS(startElement: AXUIElement) -> AXUIElement? {
         if roleStr == "AXButton" { 
             var title: CFTypeRef?
             if AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &title) == .success,
-               let titleStr = title as? String,
-               isTargetButton(text: titleStr) {
-                return element
+               let titleStr = title as? String, !titleStr.isEmpty {
+                if isTargetButton(text: titleStr) { return element }
+                collectDebugButtons?.append("title='\(titleStr)' (d=\(depth))")
             }
             
             var desc: CFTypeRef?
             if AXUIElementCopyAttributeValue(element, kAXDescriptionAttribute as CFString, &desc) == .success,
-               let descStr = desc as? String,
-               isTargetButton(text: descStr) {
-                return element
+               let descStr = desc as? String, !descStr.isEmpty {
+                if isTargetButton(text: descStr) { return element }
+                collectDebugButtons?.append("desc='\(descStr)' (d=\(depth))")
+            }
+
+            var help: CFTypeRef?
+            if AXUIElementCopyAttributeValue(element, kAXHelpAttribute as CFString, &help) == .success,
+               let helpStr = help as? String, !helpStr.isEmpty {
+                if isTargetButton(text: helpStr) { return element }
+                collectDebugButtons?.append("help='\(helpStr)' (d=\(depth))")
             }
         }
         
@@ -102,10 +117,11 @@ func findButtonBFS(startElement: AXUIElement) -> AXUIElement? {
 let maxRetries = 3
 let retryDelayMicroseconds: useconds_t = 50_000
 var targetButton: AXUIElement? = nil
+var noDebug: [String]? = nil
 
 for _ in 0..<maxRetries {
     for window in windows {
-        if let found = findButtonBFS(startElement: window) {
+        if let found = findButtonBFS(startElement: window, collectDebugButtons: &noDebug) {
             targetButton = found
             break
         }
@@ -115,7 +131,12 @@ for _ in 0..<maxRetries {
 }
 
 guard let button = targetButton else {
-    fputs("Error: Expand/Collapse tabs button not found in Chrome UI.\n", stderr)
+    var debugButtons: [String]? = []
+    for window in windows {
+        _ = findButtonBFS(startElement: window, collectDebugButtons: &debugButtons)
+    }
+    let foundList = (debugButtons ?? []).joined(separator: ", ")
+    fputs("Error: Expand/Collapse tabs button not found in Chrome UI. Found buttons: [\(foundList)]\n", stderr)
     exit(1)
 }
 
